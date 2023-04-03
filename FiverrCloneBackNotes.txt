@@ -1,0 +1,153 @@
+        SECOND PART
+
+Source: https://www.youtube.com/watch?v=csUM7yfiaMw&t=233s&ab_channel=LamaDev
+
+Creo un server de Node y lo conecto con MongoAtlas.Usaré TS y Mongoose v7.
+NOTA: fijate que otra opcion interesnate es crear una funcion asyncrona que maneje la conexion y llamarla en el app.listen()
+Creo los modelos,rutas y controladores que usaremos.
+
+Fijate como en un Modelo los campos required tengo que mandarlos al crear un Documento:
+const UserSchema = new Schema<UserDocument>(
+  {
+    username: { type: String, required: true, unique: true },
+    email: { type: String, required: true, unique: true },
+    password: { type: String, required: true },
+    img: { type: String, required: false},
+    country: { type: String,required:true },
+    phone: { type: String, required: false },
+    desc: { type: String, required: false },
+    isSeller: { type: Boolean, default: false },
+  },
+
+Asi que tengo que mandar country,password,email y username ya desde el register.
+
+        USAR JWT EMBEBIDO EN UNA COOKIE
+
+Minuto 42: para generar y comprobar las passwords usamos bcryptjs.Para el token vamos a usar jsonwebtoken y cookie-parser para embeberlo.Perfecto esta vez.
+
+NOTA: para usar cookies simplemente hay que llamar a la funcion cookieParser que devuelve un RequestHandler(un middleware).Más fácil imposible:
+
+app.use(cookieParser()); <- en Typescript necesita de los types
+
+Docu: https://cheatcode.co/tutorials/how-to-implement-secure-httponly-cookies-in-node-js-with-express
+TIPS: usar una cookie segura es problablemente lo mejor que pueda hacer para guardar el token.Hay tres tipos de ataques contra ellas:
+
+1 cross-site scriptings attacks (XSS): these attacks rely on client-side Javascript being injected into the front-end of your application and then accesing cookies via the browser's Javascript cookies API <- parecen jodios de evitar ??
+2- Man-in-the-middle attacks: these attacks occur when a request is travelling from the browser to the server and the server does not have a HTTPS connection(no SSL)
+3 Cross-site tracing attacks(XST): In the Http protocol, an Http method called TRACE exists which allows attackers to send a request to a server(and obtain its cookies) while bypassing any security. While modern browsers generally make this irrelevant due to disabling of the TRACE method,it's still good to be aware of and guard againt for added security(psé)
+
+NOTA: el método res.cookie(name,dataToSend) necesita la data a mandar en forma de string
+La property secure a true solo permite acceder a la cookie mediante SSL/HTTPS,por eso en development hay que ponerla a false y en production a true
+La property httpOnly especifica si la cookie es accesible por el Javascript del browser.De esta manera nos protegemos contra los cross-site scripting attacks(XSS).
+Dar una expiración a la cookie tmb es fundamental
+La property sameSite decide si la cookie es accesible desde el mismo dominio.Ojo que por defecto está en false y no es accesible
+
+Con todo esto en el login(y el register tmb si accede automáticamente tras resgistrarse el usuario) simplemente hay que llamar a response.cookie() tmb
+
+const token = JWTUtils.generateToken({
+  id: user._id,
+  isSeller: user.isSeller,
+});
+// and we embebe it in the cookie
+return res
+  .status(200)
+  .cookie("accessToken ", token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV !== "development",
+    expires: new Date(Date.now() + 1000 * 60 * 60 * 24),
+  })
+  .json({ ok: true, user });
+
+IMPORTANTE: recuerda que un middleware lleva un último argumento de tipo NextFuncion y es bloqueante por naturaleza:
+
+export const verifyToken = (req: Request, res: Response, next: NextFunction) => {
+  const token = req.cookies.accessToken;
+  if (!token) return res.status(403).json({ ok: false, error: `You are not authenticated` });
+
+  return jwt.verify(token, process.env.JWT_SECRET!, (err: any, payload: any) => {
+    if (err)
+      return res
+        .status(403)
+        .json({ ok: false, error: `Something went wrong while verifying token: ${err}` });
+
+    req.userId = payload.id;
+    req.isSeller = payload.isSeller;
+    next();
+  });
+};
+
+      GLOBAL ERROR HANDLING MIDDLEWARE
+
+1h00: middleware para el verify de la cookie y middleware global de gestion de error:
+
+TIP: en este punto voy a crear una clase que extienda de Error:
+export enum HttpCode {
+  OK = 200,
+  NO_CONTENT = 204,
+  BAD_REQUEST = 400,
+  UNAUTHORIZED = 401,
+  NOT_FOUND = 404,
+  INTERNAL_SERVER_ERROR = 500,
+}
+
+export class HttpException extends Error {
+  public readonly message: string;
+  public readonly statusCode: HttpCode;
+
+  constructor(statusCode: HttpCode, message: string) {
+    super(message);
+    this.statusCode = statusCode;
+    this.message = message;
+  }
+}
+
+
+Y usarla como tipo en el middleware global:
+
+app.use((err: HttpException, req: Request, res: Response, next: NextFunction) => {
+  const errorStatus = err.status || 500;
+
+  return res.status(errorStatus).json({
+    success: false,
+    status: err.status,
+    message: err?.message || "Something went wrong",
+  });
+});
+
+NOTA: desde el momento que usamos esta aproximación ahora todos los controladores tendrán que llevar un tercer argumento de tipo NextFunction y debo llamar al error como argumento de dicha funcion:
+
+export const register = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    // fijate que con CTRL + C realmente estoy copiando desde el modo visual todas las lineas,aunque no lo vea lo hace
+    // req.body = username + email + password + country
+    const newUser = new UserModel({
+      ...req.body,
+      password: PassWordUtils.encryptPassword(req.body.password),
+    });
+    await newUser.save();
+
+    return res.status(201).send("User has been created");
+  } catch (error) {
+    console.log(error);
+    return next(new HttpException(HttpCode.INTERNAL_SERVER_ERROR, `Error of type: ${error}`));
+  }
+};
+
+Me gusta mucho esta aproximación.Implementarla siempre.
+
+Para el logout simplemente borramos la cookie:
+
+export const logout = async (req: Request, res: Response) => {
+  return res
+    .clearCookie("accessToken", {
+      // localhost:5173 y localhost:3000 no son el mismo sitio y es lo que vamos a tener,ambos en puertos diferentes
+      sameSite: "none",
+      secure: true,
+    })
+    .status(200)
+    .json({ ok: true, message: `User has been logged out` });
+};
+
+Con todo esto ya podemos ir al Front e implementar el register y el login.Fijate que al usar axios tengo que especificar withCredentials a true
+1h 16 seguir con el refactor de axios en el cliente
+  
