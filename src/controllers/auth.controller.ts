@@ -14,7 +14,7 @@ export const register = async (req: Request, res: Response, next: NextFunction) 
     });
     await newUser.save();
 
-    return res.status(201).send("User has been created");
+    return res.status(201).json({ ok: true, user: newUser });
   } catch (error) {
     console.log(error);
     return next(new HttpException(HttpCode.INTERNAL_SERVER_ERROR, `Error of type: ${error}`));
