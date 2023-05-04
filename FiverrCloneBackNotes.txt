@@ -150,4 +150,7 @@ export const logout = async (req: Request, res: Response) => {
 
 Con todo esto ya podemos ir al Front e implementar el register y el login.Fijate que al usar axios tengo que especificar withCredentials a true
 1h 16 seguir con el refactor de axios en el cliente
+
+1h35: un gig es un concierto/show al parecer.Creamos los endpoints para crear un Gig(solo si el user es un seller), para borrarlo(solo si es el gig del currentuser),y para obtener uno y todos.
+1h47:filtrar queries en Mongoose
   
